@@ -38,15 +38,10 @@ def wavelet_dec_once(x, filt, channels):
     low, high = x[..., :channels], x[..., channels:]
     k = make_kernel(filt[0], filt[1])
 
-    if jax.default_backend() == "tpu":
-        kernel = jnp.zeros((channels * 4, channels, k.shape[2], k.shape[3]), k.dtype)
-        for o in range(channels):
-            for i in range(4):
-                kernel = kernel.at[i + o * 4, o].set(k[i, 0])
-        groups = 1
-    else:
-        kernel = jnp.tile(k, [channels, 1, 1, 1])
-        groups = channels
+    kernel = jnp.zeros((channels * 4, channels, k.shape[2], k.shape[3]), k.dtype)
+    for o in range(channels):
+        kernel = kernel.at[o * 4 : o * 4 + 4, o].set(k[:, 0])
+    groups = 1
 
     n = kernel.shape[-1] - 1
     lo, hi = n // 2, n // 2 + n % 2
@@ -75,8 +70,7 @@ def wavelet_rec_once(x, filt, channels):
     if jax.default_backend() == "tpu":
         kernel = jnp.zeros((channels * 4, channels, k.shape[2], k.shape[3]), k.dtype)
         for o in range(channels):
-            for i in range(4):
-                kernel = kernel.at[i + o * 4, o].set(k[i, 0])
+            kernel = kernel.at[o * 4 : o * 4 + 4, o].set(k[:, 0])
         groups = 1
     else:
         kernel = jnp.tile(k, [1, channels, 1, 1])
