@@ -56,6 +56,7 @@ def make_kernels(filter, channels):
     k_rec = make_2d_kernel(filter[2], filter[3])
     kernel_dec = kernel.at[index_i * channels + index_j, index_j].set(k_dec[index_i, 0])
     kernel_rec = kernel.at[index_i * channels + index_j, index_j].set(k_rec[index_i, 0])
+    kernel_rec = jnp.swapaxes(kernel_rec, 0, 1)
     return kernel_dec, kernel_rec
 
 
@@ -83,7 +84,7 @@ def wavelet_dec_once(x, kernel):
 
 def wavelet_rec_once(x, kernel):
     """Do one level of the IDWT."""
-    channels = kernel.shape[1]
+    channels = kernel.shape[0]
     low, high = x[..., : channels * 4], x[..., channels * 4 :]
 
     n = kernel.shape[-1]
@@ -95,7 +96,7 @@ def wavelet_rec_once(x, kernel):
         window_strides=(1, 1),
         padding=((0, 0), (0, 0)),
         lhs_dilation=(2, 2),
-        dimension_numbers=("NHWC", "IOHW", "NHWC"),
+        dimension_numbers=("NHWC", "OIHW", "NHWC"),
     )
     low = low[:, lo:-hi, lo:-hi, :]
     high = rearrange(
