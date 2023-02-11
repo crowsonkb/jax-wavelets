@@ -17,7 +17,11 @@ def get_filter_bank(wavelet, dtype=jnp.float32):
     Returns:
         A JAX array containing the filter bank.
     """
-    return jnp.array(pywt.Wavelet(wavelet).filter_bank, dtype)
+    filt = jnp.array(pywt.Wavelet(wavelet).filter_bank, dtype)
+    # Special case for some bior family wavelets
+    if jnp.all(filt[:, 0] == 0):
+        filt = filt[:, 1:]
+    return filt
 
 
 def make_kernel(lo, hi):
