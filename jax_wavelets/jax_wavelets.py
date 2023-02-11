@@ -84,7 +84,7 @@ def wavelet_rec_once(x, filt, channels):
 
     n = kernel.shape[-1]
     lo, hi = n // 2 + n % 2, n // 2
-    lo_pre, hi_pre = lo // 2 + lo % 2, lo // 2
+    lo_pre, hi_pre = lo // 2, lo // 2 + lo % 2
     lo_post, hi_post = lo_pre * 2, hi_pre * 2
     low = rearrange(low, "n h w (c1 c2) -> n h w (c2 c1)", c1=4)
     low = jnp.pad(low, ((0, 0), (lo_pre, hi_pre), (lo_pre, hi_pre), (0, 0)), "wrap")
