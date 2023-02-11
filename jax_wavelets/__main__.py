@@ -59,7 +59,8 @@ def main():
     y = jit_down(x)
     start = time.time()
     for i in range(args.n):
-        y = jit_down(x).block_until_ready()
+        y = jit_down(x)
+    y.block_until_ready()
     time_taken = (time.time() - start) / args.n
     print(f"Time for  DWT  forward: {time_taken:g} s/it ({1 / time_taken:g} it/s)")
 
@@ -68,7 +69,8 @@ def main():
     z = jit_up(y)
     start = time.time()
     for i in range(args.n):
-        z = jit_up(y).block_until_ready()
+        z = jit_up(y)
+    z.block_until_ready()
     time_taken = (time.time() - start) / args.n
     print(f"Time for IDWT  forward: {time_taken:g} s/it ({1 / time_taken:g} it/s)")
 
@@ -77,7 +79,8 @@ def main():
     _ = vjp_down(y)
     start = time.time()
     for i in range(args.n):
-        _ = vjp_down(y)[0].block_until_ready()
+        _ = vjp_down(y)[0]
+    _.block_until_ready()
     time_taken = (time.time() - start) / args.n
     print(f"Time for  DWT backward: {time_taken:g} s/it ({1 / time_taken:g} it/s)")
 
@@ -86,7 +89,8 @@ def main():
     _ = vjp_up(z)
     start = time.time()
     for i in range(args.n):
-        _ = vjp_up(z)[0].block_until_ready()
+        _ = vjp_up(z)[0]
+    _.block_until_ready()
     time_taken = (time.time() - start) / args.n
     print(f"Time for IDWT backward: {time_taken:g} s/it ({1 / time_taken:g} it/s)")
 
