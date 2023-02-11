@@ -34,16 +34,21 @@ def main():
     parser.add_argument("--wavelet", type=str, default="bior4.4", help="the wavelet")
     args = parser.parse_args()
 
+    print(f"Using device: {jnp.zeros(()).device().device_kind}")
+
     print(f"Using dtype: {args.dtype}")
     print(f"Number of decomposition levels: {args.levels}")
     print(f"Number of iterations: {args.n}")
     print(f"Using wavelet: {args.wavelet}")
 
     filt = get_filter_bank(args.wavelet, args.dtype)
-    print(f"Kernel size: {filt.shape[1]}x{filt.shape[1]}")
+    kernel = make_kernel(filt[0], filt[1])
+    print(f"Kernel size: {kernel.shape[2]}x{kernel.shape[3]}")
 
     x = jax.random.normal(
-        jax.random.PRNGKey(0), (args.batch_size, *args.size, args.channels)
+        jax.random.PRNGKey(0),
+        (args.batch_size, *args.size, args.channels),
+        dtype=args.dtype,
     )
     print(f"Input shape: {x.shape}")
 

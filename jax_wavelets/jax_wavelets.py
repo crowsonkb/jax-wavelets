@@ -36,8 +36,18 @@ def make_kernel(lo, hi):
 def wavelet_dec_once(x, filt, channels):
     """Do one level of the DWT."""
     low, high = x[..., :channels], x[..., channels:]
-    kernel = make_kernel(filt[0], filt[1])
-    kernel = jnp.tile(kernel, [channels, 1, 1, 1])
+    k = make_kernel(filt[0], filt[1])
+
+    if jax.default_backend() == "tpu":
+        kernel = jnp.zeros((channels * 4, channels, k.shape[2], k.shape[3]), k.dtype)
+        for o in range(channels):
+            for i in range(4):
+                kernel = kernel.at[i + o * 4, o].set(k[i, 0])
+        groups = 1
+    else:
+        kernel = jnp.tile(k, [channels, 1, 1, 1])
+        groups = channels
+
     n = kernel.shape[-1] - 1
     lo, hi = n // 2, n // 2 + n % 2
     low = jnp.pad(low, ((0, 0), (lo, hi), (lo, hi), (0, 0)), "wrap")
@@ -47,7 +57,7 @@ def wavelet_dec_once(x, filt, channels):
         window_strides=(2, 2),
         padding=((0, 0), (0, 0)),
         dimension_numbers=("NHWC", "OIHW", "NHWC"),
-        feature_group_count=channels,
+        feature_group_count=groups,
     )
     low = rearrange(low, "n h w (c1 c2) -> n h w (c2 c1)", c2=4)
     high = rearrange(
@@ -60,11 +70,21 @@ def wavelet_dec_once(x, filt, channels):
 def wavelet_rec_once(x, filt, channels):
     """Do one level of the IDWT."""
     low, high = x[..., : channels * 4], x[..., channels * 4 :]
-    kernel = make_kernel(filt[2], filt[3])
-    kernel = jnp.tile(kernel, [1, channels, 1, 1])
+    k = make_kernel(filt[2], filt[3])
+
+    if jax.default_backend() == "tpu":
+        kernel = jnp.zeros((channels * 4, channels, k.shape[2], k.shape[3]), k.dtype)
+        for o in range(channels):
+            for i in range(4):
+                kernel = kernel.at[i + o * 4, o].set(k[i, 0])
+        groups = 1
+    else:
+        kernel = jnp.tile(k, [1, channels, 1, 1])
+        groups = channels
+
     n = kernel.shape[-1]
-    lo, hi = n // 2, n // 2 + n % 2
-    lo_pre, hi_pre = lo // 2, lo // 2 + lo % 2
+    lo, hi = n // 2 + n % 2, n // 2
+    lo_pre, hi_pre = lo // 2 + lo % 2, lo // 2
     lo_post, hi_post = lo_pre * 2, hi_pre * 2
     low = rearrange(low, "n h w (c1 c2) -> n h w (c2 c1)", c1=4)
     low = jnp.pad(low, ((0, 0), (lo_pre, hi_pre), (lo_pre, hi_pre), (0, 0)), "wrap")
@@ -75,7 +95,7 @@ def wavelet_rec_once(x, filt, channels):
         padding=((lo, hi), (lo, hi)),
         lhs_dilation=(2, 2),
         dimension_numbers=("NHWC", "IOHW", "NHWC"),
-        feature_group_count=channels,
+        feature_group_count=groups,
     )
     low = low[:, lo_post:-hi_post, lo_post:-hi_post, :]
     high = rearrange(
