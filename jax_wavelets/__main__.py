@@ -42,8 +42,10 @@ def main():
     print(f"Using wavelet: {args.wavelet}")
 
     filt = get_filter_bank(args.wavelet, args.dtype)
-    kernel = make_kernel(filt[0], filt[1])
-    print(f"Kernel size: {kernel.shape[2]}x{kernel.shape[3]}")
+    kernel_dec, kernel_rec = make_kernels(filt, args.channels)
+    kdh, kdw = kernel_dec.shape[2], kernel_dec.shape[3]
+    krh, krw = kernel_rec.shape[2], kernel_rec.shape[3]
+    print(f"Kernel sizes: {kdh}x{kdw}, {krh}x{krw}")
 
     x = jax.random.normal(
         jax.random.PRNGKey(0),
@@ -53,7 +55,7 @@ def main():
     print(f"Input shape: {x.shape}")
 
     # Benchmark DWT forward pass
-    jit_down = jax.jit(partial(wavelet_dec, filt=filt, levels=args.levels))
+    jit_down = jax.jit(partial(wavelet_dec, kernel=kernel_dec, levels=args.levels))
     y = jit_down(x)
     start = time.time()
     for i in range(args.n):
@@ -62,7 +64,7 @@ def main():
     print(f"Time for  DWT  forward: {time_taken:g} s/it ({1 / time_taken:g} it/s)")
 
     # Benchmark IDWT forward pass
-    jit_up = jax.jit(partial(wavelet_rec, filt=filt, levels=args.levels))
+    jit_up = jax.jit(partial(wavelet_rec, kernel=kernel_rec, levels=args.levels))
     z = jit_up(y)
     start = time.time()
     for i in range(args.n):

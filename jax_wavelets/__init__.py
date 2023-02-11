@@ -1,6 +1,7 @@
 from .jax_wavelets import (
     get_filter_bank,
-    make_kernel,
+    make_2d_kernel,
+    make_kernels,
     wavelet_dec_once,
     wavelet_rec_once,
     wavelet_dec,

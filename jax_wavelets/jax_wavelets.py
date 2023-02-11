@@ -24,7 +24,7 @@ def get_filter_bank(wavelet, dtype=jnp.float32):
     return filt
 
 
-def make_kernel(lo, hi):
+def make_2d_kernel(lo, hi):
     """Make a 2D convolution kernel from 1D lowpass and highpass filters."""
     lo = jnp.flip(lo)
     hi = jnp.flip(hi)
@@ -32,20 +32,37 @@ def make_kernel(lo, hi):
     lh = jnp.outer(hi, lo)
     hl = jnp.outer(lo, hi)
     hh = jnp.outer(hi, hi)
-    kernel = jnp.stack([ll, lh, hl, hh], 0)
-    kernel = jnp.expand_dims(kernel, 1)
+    kernel = jnp.stack([ll, lh, hl, hh])[:, None]
     return kernel
 
 
-def wavelet_dec_once(x, filt, channels):
-    """Do one level of the DWT."""
-    low, high = x[..., :channels], x[..., channels:]
-    k = make_kernel(filt[0], filt[1])
+def make_kernels(filter, channels):
+    """Precompute the convolution kernels for the DWT and IDWT for a given number of
+    channels.
 
-    kernel = jnp.zeros((channels * 4, channels, k.shape[2], k.shape[3]), k.dtype)
-    for o in range(channels):
-        kernel = kernel.at[o * 4 : o * 4 + 4, o].set(k[:, 0])
-    groups = 1
+    Args:
+        filter: A JAX array containing the filter bank.
+        channels: The number of channels in the input image.
+
+    Returns:
+        A tuple of JAX arrays containing the convolution kernels for the DWT and IDWT.
+    """
+    kernel = jnp.zeros(
+        (channels * 4, channels, filter.shape[1], filter.shape[1]), filter.dtype
+    )
+    index_i = jnp.repeat(jnp.arange(4), channels)
+    index_j = jnp.tile(jnp.arange(channels), 4)
+    k_dec = make_2d_kernel(filter[0], filter[1])
+    k_rec = make_2d_kernel(filter[2], filter[3])
+    kernel_dec = kernel.at[index_i * channels + index_j, index_j].set(k_dec[index_i, 0])
+    kernel_rec = kernel.at[index_i * channels + index_j, index_j].set(k_rec[index_i, 0])
+    return kernel_dec, kernel_rec
+
+
+def wavelet_dec_once(x, kernel):
+    """Do one level of the DWT."""
+    channels = kernel.shape[1]
+    low, high = x[..., :channels], x[..., channels:]
 
     n = kernel.shape[-1] - 1
     lo, hi = n // 2, n // 2 + n % 2
@@ -56,9 +73,7 @@ def wavelet_dec_once(x, filt, channels):
         window_strides=(2, 2),
         padding=((0, 0), (0, 0)),
         dimension_numbers=("NHWC", "OIHW", "NHWC"),
-        feature_group_count=groups,
     )
-    low = rearrange(low, "n h w (c1 c2) -> n h w (c2 c1)", c2=4)
     high = rearrange(
         high, "n (h h2) (w w2) (c c2) -> n h w (c h2 w2 c2)", h2=2, w2=2, c2=channels
     )
@@ -66,36 +81,23 @@ def wavelet_dec_once(x, filt, channels):
     return x
 
 
-def wavelet_rec_once(x, filt, channels):
+def wavelet_rec_once(x, kernel):
     """Do one level of the IDWT."""
+    channels = kernel.shape[1]
     low, high = x[..., : channels * 4], x[..., channels * 4 :]
-    k = make_kernel(filt[2], filt[3])
-
-    if jax.default_backend() == "tpu":
-        kernel = jnp.zeros((channels * 4, channels, k.shape[2], k.shape[3]), k.dtype)
-        for o in range(channels):
-            kernel = kernel.at[o * 4 : o * 4 + 4, o].set(k[:, 0])
-        groups = 1
-    else:
-        kernel = jnp.tile(k, [1, channels, 1, 1])
-        groups = channels
 
     n = kernel.shape[-1]
     lo, hi = n // 2 + n % 2, n // 2
-    lo_pre, hi_pre = lo // 2, lo // 2 + lo % 2
-    lo_post, hi_post = lo_pre * 2, hi_pre * 2
-    low = rearrange(low, "n h w (c1 c2) -> n h w (c2 c1)", c1=4)
-    low = jnp.pad(low, ((0, 0), (lo_pre, hi_pre), (lo_pre, hi_pre), (0, 0)), "wrap")
+    low = jnp.pad(low, ((0, 0), (lo, hi), (lo, hi), (0, 0)), "wrap")
     low = jax.lax.conv_general_dilated(
         lhs=low,
         rhs=kernel,
         window_strides=(1, 1),
-        padding=((lo, hi), (lo, hi)),
+        padding=((0, 0), (0, 0)),
         lhs_dilation=(2, 2),
         dimension_numbers=("NHWC", "IOHW", "NHWC"),
-        feature_group_count=groups,
     )
-    low = low[:, lo_post:-hi_post, lo_post:-hi_post, :]
+    low = low[:, lo:-hi, lo:-hi, :]
     high = rearrange(
         high, "n h w (c h2 w2 c2) -> n (h h2) (w w2) (c c2)", h2=2, w2=2, c2=channels
     )
@@ -103,39 +105,37 @@ def wavelet_rec_once(x, filt, channels):
     return x
 
 
-def wavelet_dec(x, filt, levels):
+def wavelet_dec(x, kernel, levels):
     """Do the DWT for a given number of levels.
 
     Args:
         x: Input image (NHWC layout).
-        filt: Filter bank.
+        kernel: Decomposition kernel.
         levels: Number of levels.
 
     Returns:
         The DWT coefficients, with shape
         (N, H // 2 ** levels, W // 2 ** levels, C * 4 ** levels).
     """
-    channels = x.shape[-1]
     for i in range(levels):
-        x = wavelet_dec_once(x, filt, channels)
+        x = wavelet_dec_once(x, kernel)
     return x
 
 
-def wavelet_rec(x, filt, levels):
+def wavelet_rec(x, kernel, levels):
     """Do the IDWT for a given number of levels.
 
     Args:
         x: Input array of IDWT coefficients.
-        filt: Filter bank.
+        kernel: Reconstruction kernel.
         levels: Number of levels.
 
     Returns:
         The IDWT coefficients, with shape
         (N, H * 2 ** levels, W * 2 ** levels, C // 4 ** levels).
     """
-    channels = x.shape[-1] // 4**levels
     for i in reversed(range(levels)):
-        x = wavelet_rec_once(x, filt, channels)
+        x = wavelet_rec_once(x, kernel)
     return x
 
 
