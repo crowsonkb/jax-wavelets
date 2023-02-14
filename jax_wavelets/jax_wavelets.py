@@ -19,7 +19,7 @@ def get_filter_bank(wavelet, dtype=jnp.float32):
     """
     filt = jnp.array(pywt.Wavelet(wavelet).filter_bank, dtype)
     # Special case for some bior family wavelets
-    if jnp.all(filt[:, 0] == 0):
+    if wavelet.startswith("bior") and jnp.all(filt[:, 0] == 0):
         filt = filt[:, 1:]
     return filt
 
@@ -60,10 +60,10 @@ def make_kernels(filter, channels):
     return kernel_dec, kernel_rec
 
 
-def wavelet_dec_once(x, kernel):
-    """Do one level of the DWT."""
+def wavelet_dec_once_wrap(x, kernel):
+    """Do one level of the DWT (periodic signal extension)."""
     channels = kernel.shape[1]
-    low, high = x[..., :channels], x[..., channels:]
+    low, rest = x[..., :channels], x[..., channels:]
 
     n = kernel.shape[-1] - 1
     lo, hi = n // 2, n // 2 + n % 2
@@ -75,17 +75,17 @@ def wavelet_dec_once(x, kernel):
         padding=((0, 0), (0, 0)),
         dimension_numbers=("NHWC", "OIHW", "NHWC"),
     )
-    high = rearrange(
-        high, "n (h h2) (w w2) (c c2) -> n h w (c h2 w2 c2)", h2=2, w2=2, c2=channels
+    rest = rearrange(
+        rest, "n (h h2) (w w2) (c c2) -> n h w (c h2 w2 c2)", h2=2, w2=2, c2=channels
     )
-    x = jnp.concatenate([low, high], axis=-1)
+    x = jnp.concatenate([low, rest], axis=-1)
     return x
 
 
-def wavelet_rec_once(x, kernel):
-    """Do one level of the IDWT."""
+def wavelet_rec_once_wrap(x, kernel):
+    """Do one level of the IDWT (periodic signal extension)."""
     channels = kernel.shape[0]
-    low, high = x[..., : channels * 4], x[..., channels * 4 :]
+    low, rest = x[..., : channels * 4], x[..., channels * 4 :]
 
     n = kernel.shape[-1]
     lo, hi = n // 2 + n % 2, n // 2
@@ -99,44 +99,138 @@ def wavelet_rec_once(x, kernel):
         dimension_numbers=("NHWC", "OIHW", "NHWC"),
     )
     low = low[:, lo:-hi, lo:-hi, :]
-    high = rearrange(
-        high, "n h w (c h2 w2 c2) -> n (h h2) (w w2) (c c2)", h2=2, w2=2, c2=channels
+    rest = rearrange(
+        rest, "n h w (c h2 w2 c2) -> n (h h2) (w w2) (c c2)", h2=2, w2=2, c2=channels
     )
-    x = jnp.concatenate([low, high], axis=-1)
+    x = jnp.concatenate([low, rest], axis=-1)
     return x
 
 
-def wavelet_dec(x, kernel, levels):
+def wavelet_dec_once_reflect(x, kernel):
+    """Do one level of the DWT (whole-sample symmetric signal extension)."""
+    channels = kernel.shape[1]
+    pad = kernel.shape[-1] // 2
+
+    low, rest = x[..., :channels], x[..., channels:]
+    low = jnp.pad(low, ((0, 0), (pad, pad), (pad, pad), (0, 0)), "reflect")
+    low = jax.lax.conv_general_dilated(
+        lhs=low,
+        rhs=kernel,
+        window_strides=(2, 2),
+        padding=((0, 0), (0, 0)),
+        dimension_numbers=("NHWC", "OIHW", "NHWC"),
+    )
+    rest = rearrange(
+        rest, "n (h h2) (w w2) (c c2) -> n h w (c h2 w2 c2)", h2=2, w2=2, c2=channels
+    )
+    x = jnp.concatenate([low, rest], axis=-1)
+    return x
+
+
+def wavelet_rec_once_reflect(x, kernel):
+    """Do one level of the IDWT (whole-sample symmetric signal extension)."""
+    channels = kernel.shape[0]
+    pad = kernel.shape[-1] // 2
+
+    low, rest = x[..., : channels * 4], x[..., channels * 4 :]
+
+    # For lowpass coefficients, pad the left/top with reflect and the right/bottom
+    # with symmetric. For highpass coefficients, pad the left/top with symmetric and
+    # the right/bottom with reflect.
+    ll, lh, hl, hh = jnp.split(low, 4, axis=-1)
+    ll = jnp.pad(ll, ((0, 0), (pad, 0), (0, 0), (0, 0)), "reflect")
+    ll = jnp.pad(ll, ((0, 0), (0, pad), (0, 0), (0, 0)), "symmetric")
+    ll = jnp.pad(ll, ((0, 0), (0, 0), (pad, 0), (0, 0)), "reflect")
+    ll = jnp.pad(ll, ((0, 0), (0, 0), (0, pad), (0, 0)), "symmetric")
+    lh = jnp.pad(lh, ((0, 0), (pad, 0), (0, 0), (0, 0)), "symmetric")
+    lh = jnp.pad(lh, ((0, 0), (0, pad), (0, 0), (0, 0)), "reflect")
+    lh = jnp.pad(lh, ((0, 0), (0, 0), (pad, 0), (0, 0)), "reflect")
+    lh = jnp.pad(lh, ((0, 0), (0, 0), (0, pad), (0, 0)), "symmetric")
+    hl = jnp.pad(hl, ((0, 0), (pad, 0), (0, 0), (0, 0)), "reflect")
+    hl = jnp.pad(hl, ((0, 0), (0, pad), (0, 0), (0, 0)), "symmetric")
+    hl = jnp.pad(hl, ((0, 0), (0, 0), (pad, 0), (0, 0)), "symmetric")
+    hl = jnp.pad(hl, ((0, 0), (0, 0), (0, pad), (0, 0)), "reflect")
+    hh = jnp.pad(hh, ((0, 0), (pad, 0), (0, 0), (0, 0)), "symmetric")
+    hh = jnp.pad(hh, ((0, 0), (0, pad), (0, 0), (0, 0)), "reflect")
+    hh = jnp.pad(hh, ((0, 0), (0, 0), (pad, 0), (0, 0)), "symmetric")
+    hh = jnp.pad(hh, ((0, 0), (0, 0), (0, pad), (0, 0)), "reflect")
+    low = jnp.concatenate([ll, lh, hl, hh], axis=-1)
+
+    low = jax.lax.conv_general_dilated(
+        lhs=low,
+        rhs=kernel,
+        window_strides=(1, 1),
+        padding=((0, 0), (0, 0)),
+        lhs_dilation=(2, 2),
+        dimension_numbers=("NHWC", "OIHW", "NHWC"),
+    )
+    low = low[:, pad - 1 : -pad, pad - 1 : -pad, :]
+    rest = rearrange(
+        rest, "n h w (c h2 w2 c2) -> n (h h2) (w w2) (c c2)", h2=2, w2=2, c2=channels
+    )
+    x = jnp.concatenate([low, rest], axis=-1)
+    return x
+
+
+def wavelet_dec(x, kernel, levels, mode="wrap"):
     """Do the DWT for a given number of levels.
 
     Args:
         x: Input image (NHWC layout).
         kernel: Decomposition kernel.
         levels: Number of levels.
+        mode: Padding mode, either "wrap" or "reflect". "wrap" is supported for all
+            PyWavelets discrete wavelets, while "reflect" is only supported for
+            symmetric odd length wavelets, that is, bior[x].[y] wavelets where x is
+            even.
 
     Returns:
         The DWT coefficients, with shape
         (N, H // 2 ** levels, W // 2 ** levels, C * 4 ** levels).
     """
+    if mode == "wrap":
+        fun = wavelet_dec_once_wrap
+    elif mode == "reflect":
+        if kernel.shape[-1] % 2 == 0:
+            raise ValueError("Reflect padding only works with odd kernels.")
+        fun = wavelet_dec_once_reflect
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
     for i in range(levels):
-        x = wavelet_dec_once(x, kernel)
+        x = fun(x, kernel)
+
     return x
 
 
-def wavelet_rec(x, kernel, levels):
+def wavelet_rec(x, kernel, levels, mode="wrap"):
     """Do the IDWT for a given number of levels.
 
     Args:
         x: Input array of IDWT coefficients.
         kernel: Reconstruction kernel.
         levels: Number of levels.
+        mode: Padding mode, either "wrap" or "reflect". "wrap" is supported for all
+            PyWavelets discrete wavelets, while "reflect" is only supported for
+            symmetric odd length wavelets, that is, bior[x].[y] wavelets where x is
+            even.
 
     Returns:
         The IDWT coefficients, with shape
         (N, H * 2 ** levels, W * 2 ** levels, C // 4 ** levels).
     """
+    if mode == "wrap":
+        fun = wavelet_rec_once_wrap
+    elif mode == "reflect":
+        if kernel.shape[-1] % 2 == 0:
+            raise ValueError("Reflect padding only works with odd kernels.")
+        fun = wavelet_rec_once_reflect
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
     for i in reversed(range(levels)):
-        x = wavelet_rec_once(x, kernel)
+        x = fun(x, kernel)
+
     return x
 
 

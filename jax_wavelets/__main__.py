@@ -27,6 +27,13 @@ def main():
     parser.add_argument(
         "--levels", type=int, default=3, help="the number of decomposition levels"
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="wrap",
+        choices=["wrap", "reflect"],
+        help="the signal extension mode",
+    )
     parser.add_argument("-n", type=int, default=100, help="the number of iterations")
     parser.add_argument(
         "--size", type=int, nargs=2, default=(512, 512), help="the image size"
@@ -37,9 +44,10 @@ def main():
     print(f"Using device: {jnp.zeros(()).device().device_kind}")
 
     print(f"Using dtype: {args.dtype}")
-    print(f"Number of decomposition levels: {args.levels}")
-    print(f"Number of iterations: {args.n}")
     print(f"Using wavelet: {args.wavelet}")
+    print(f"Number of decomposition levels: {args.levels}")
+    print(f"Signal extension mode: {args.mode}")
+    print(f"Number of iterations: {args.n}")
 
     filt = get_filter_bank(args.wavelet, args.dtype)
     kernel_dec, kernel_rec = make_kernels(filt, args.channels)
@@ -47,7 +55,7 @@ def main():
     krh, krw = kernel_rec.shape[2], kernel_rec.shape[3]
     print(f"Kernel sizes: {kdh}x{kdw}, {krh}x{krw}")
 
-    x = jax.random.normal(
+    x = jax.random.uniform(
         jax.random.PRNGKey(0),
         (args.batch_size, *args.size, args.channels),
         dtype=args.dtype,
@@ -55,7 +63,9 @@ def main():
     print(f"Input shape: {x.shape}")
 
     # Benchmark DWT forward pass
-    jit_down = jax.jit(partial(wavelet_dec, kernel=kernel_dec, levels=args.levels))
+    jit_down = jax.jit(
+        partial(wavelet_dec, kernel=kernel_dec, levels=args.levels, mode=args.mode)
+    )
     y = jit_down(x)
     start = time.time()
     for i in range(args.n):
@@ -65,7 +75,9 @@ def main():
     print(f"Time for  DWT  forward: {time_taken:g} s/it ({1 / time_taken:g} it/s)")
 
     # Benchmark IDWT forward pass
-    jit_up = jax.jit(partial(wavelet_rec, kernel=kernel_rec, levels=args.levels))
+    jit_up = jax.jit(
+        partial(wavelet_rec, kernel=kernel_rec, levels=args.levels, mode=args.mode)
+    )
     z = jit_up(y)
     start = time.time()
     for i in range(args.n):
