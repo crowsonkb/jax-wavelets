@@ -130,31 +130,15 @@ def wavelet_dec_once_reflect(x, kernel):
 def wavelet_rec_once_reflect(x, kernel):
     """Do one level of the IDWT (whole-sample symmetric signal extension)."""
     channels = kernel.shape[0]
-    pad = kernel.shape[-1] // 2
+    pad = kernel.shape[-1] // 2 + 2
+    shape_orig = x.shape
 
     low, rest = x[..., : channels * 4], x[..., channels * 4 :]
 
-    # For lowpass coefficients, pad the left/top with reflect and the right/bottom
-    # with symmetric. For highpass coefficients, pad the left/top with symmetric and
-    # the right/bottom with reflect.
-    ll, lh, hl, hh = jnp.split(low, 4, axis=-1)
-    ll = jnp.pad(ll, ((0, 0), (pad, 0), (0, 0), (0, 0)), "reflect")
-    ll = jnp.pad(ll, ((0, 0), (0, pad), (0, 0), (0, 0)), "symmetric")
-    ll = jnp.pad(ll, ((0, 0), (0, 0), (pad, 0), (0, 0)), "reflect")
-    ll = jnp.pad(ll, ((0, 0), (0, 0), (0, pad), (0, 0)), "symmetric")
-    lh = jnp.pad(lh, ((0, 0), (pad, 0), (0, 0), (0, 0)), "symmetric")
-    lh = jnp.pad(lh, ((0, 0), (0, pad), (0, 0), (0, 0)), "reflect")
-    lh = jnp.pad(lh, ((0, 0), (0, 0), (pad, 0), (0, 0)), "reflect")
-    lh = jnp.pad(lh, ((0, 0), (0, 0), (0, pad), (0, 0)), "symmetric")
-    hl = jnp.pad(hl, ((0, 0), (pad, 0), (0, 0), (0, 0)), "reflect")
-    hl = jnp.pad(hl, ((0, 0), (0, pad), (0, 0), (0, 0)), "symmetric")
-    hl = jnp.pad(hl, ((0, 0), (0, 0), (pad, 0), (0, 0)), "symmetric")
-    hl = jnp.pad(hl, ((0, 0), (0, 0), (0, pad), (0, 0)), "reflect")
-    hh = jnp.pad(hh, ((0, 0), (pad, 0), (0, 0), (0, 0)), "symmetric")
-    hh = jnp.pad(hh, ((0, 0), (0, pad), (0, 0), (0, 0)), "reflect")
-    hh = jnp.pad(hh, ((0, 0), (0, 0), (pad, 0), (0, 0)), "symmetric")
-    hh = jnp.pad(hh, ((0, 0), (0, 0), (0, pad), (0, 0)), "reflect")
-    low = jnp.concatenate([ll, lh, hl, hh], axis=-1)
+    # Interleave lowpass and highpass coefficients, pad, and deinterleave
+    low = rearrange(low, "n h w (w2 h2 c) -> n (h h2) (w w2) c", h2=2, w2=2)
+    low = jnp.pad(low, ((0, 0), (pad, pad), (pad, pad), (0, 0)), "reflect")
+    low = rearrange(low, "n (h h2) (w w2) c -> n h w (w2 h2 c)", h2=2, w2=2)
 
     low = jax.lax.conv_general_dilated(
         lhs=low,
@@ -164,7 +148,8 @@ def wavelet_rec_once_reflect(x, kernel):
         lhs_dilation=(2, 2),
         dimension_numbers=("NHWC", "OIHW", "NHWC"),
     )
-    low = low[:, pad - 1 : -pad, pad - 1 : -pad, :]
+    crop = (low.shape[1] - shape_orig[1] * 2) // 2
+    low = low[:, crop : low.shape[1] - crop - 1, crop : low.shape[2] - crop - 1, :]
     rest = rearrange(
         rest, "n h w (c h2 w2 c2) -> n (h h2) (w w2) (c c2)", h2=2, w2=2, c2=channels
     )

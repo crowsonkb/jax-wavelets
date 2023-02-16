@@ -55,7 +55,7 @@ def main():
     krh, krw = kernel_rec.shape[2], kernel_rec.shape[3]
     print(f"Kernel sizes: {kdh}x{kdw}, {krh}x{krw}")
 
-    x = jax.random.uniform(
+    x = jax.random.normal(
         jax.random.PRNGKey(0),
         (args.batch_size, *args.size, args.channels),
         dtype=args.dtype,
@@ -109,8 +109,8 @@ def main():
     # Compute reconstruction error
     mse = jnp.mean(jnp.square(jnp.float32(x - z)))
     rms = jnp.sqrt(mse)
-    psnr = -10 * jnp.log10(mse)
-    print(f"RMS reconstruction error: {rms.item():g} (PSNR: {psnr.item():g} dB)")
+    snr = -10 * jnp.log10(mse)
+    print(f"RMS reconstruction error: {rms.item():g} (SNR: {snr.item():g} dB)")
 
     # Compare with PyWavelets
     y_pywt = pywt.wavedec2(
@@ -120,8 +120,8 @@ def main():
     sq_norms = jax.tree_map(lambda x, y: jnp.sum((x - y) ** 2), y_pywt, y_unpack)
     mse = jax.tree_util.tree_reduce(jnp.add, sq_norms) / x.size
     rms = jnp.sqrt(mse)
-    psnr = -10 * jnp.log10(mse)
-    print(f"RMS diff from pywavelets: {rms.item():g} (PSNR: {psnr.item():g} dB)")
+    snr = -10 * jnp.log10(mse)
+    print(f"RMS diff from pywavelets: {rms.item():g} (SNR: {snr.item():g} dB)")
 
     # Test pack()
     y_pack = pack(y_unpack)
