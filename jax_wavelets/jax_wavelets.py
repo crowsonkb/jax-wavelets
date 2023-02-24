@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import pywt
 
 
+@jax.ensure_compile_time_eval()
 def get_filter_bank(wavelet, dtype=jnp.float32):
     """Get the filter bank for a given pywavelets wavelet name. See
     https://wavelets.pybytes.com for a list of available wavelets.
