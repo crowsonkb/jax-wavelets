@@ -1,6 +1,6 @@
 """The 2D discrete wavelet transform for JAX."""
 
-from einops import rearrange
+from einshape import jax_einshape as einshape
 import jax
 import jax.numpy as jnp
 import pywt
@@ -76,9 +76,7 @@ def wavelet_dec_once_wrap(x, kernel):
         padding=((0, 0), (0, 0)),
         dimension_numbers=("NHWC", "OIHW", "NHWC"),
     )
-    rest = rearrange(
-        rest, "n (h h2) (w w2) (c c2) -> n h w (c h2 w2 c2)", h2=2, w2=2, c2=channels
-    )
+    rest = einshape("n(hi)(wx)(cd)->nhw(cixd)", rest, i=2, x=2, d=channels)
     x = jnp.concatenate([low, rest], axis=-1)
     return x
 
@@ -100,9 +98,7 @@ def wavelet_rec_once_wrap(x, kernel):
         dimension_numbers=("NHWC", "OIHW", "NHWC"),
     )
     low = low[:, lo:-hi, lo:-hi, :]
-    rest = rearrange(
-        rest, "n h w (c h2 w2 c2) -> n (h h2) (w w2) (c c2)", h2=2, w2=2, c2=channels
-    )
+    rest = einshape("nhw(cixd)->n(hi)(wx)(cd)", rest, i=2, x=2, d=channels)
     x = jnp.concatenate([low, rest], axis=-1)
     return x
 
@@ -121,9 +117,7 @@ def wavelet_dec_once_reflect(x, kernel):
         padding=((0, 0), (0, 0)),
         dimension_numbers=("NHWC", "OIHW", "NHWC"),
     )
-    rest = rearrange(
-        rest, "n (h h2) (w w2) (c c2) -> n h w (c h2 w2 c2)", h2=2, w2=2, c2=channels
-    )
+    rest = einshape("n(hi)(wx)(cd)->nhw(cixd)", rest, i=2, x=2, d=channels)
     x = jnp.concatenate([low, rest], axis=-1)
     return x
 
@@ -137,9 +131,9 @@ def wavelet_rec_once_reflect(x, kernel):
     low, rest = x[..., : channels * 4], x[..., channels * 4 :]
 
     # Interleave lowpass and highpass coefficients, pad, and deinterleave
-    low = rearrange(low, "n h w (w2 h2 c) -> n (h h2) (w w2) c", h2=2, w2=2)
+    low = einshape("nhw(xic)->n(hi)(wx)c", low, i=2, x=2)
     low = jnp.pad(low, ((0, 0), (pad, pad), (pad, pad), (0, 0)), "reflect")
-    low = rearrange(low, "n (h h2) (w w2) c -> n h w (w2 h2 c)", h2=2, w2=2)
+    low = einshape("n(hi)(wx)c->nhw(xic)", low, i=2, x=2)
 
     low = jax.lax.conv_general_dilated(
         lhs=low,
@@ -151,9 +145,7 @@ def wavelet_rec_once_reflect(x, kernel):
     )
     crop = (low.shape[1] - shape_orig[1] * 2) // 2
     low = low[:, crop : low.shape[1] - crop - 1, crop : low.shape[2] - crop - 1, :]
-    rest = rearrange(
-        rest, "n h w (c h2 w2 c2) -> n (h h2) (w w2) (c c2)", h2=2, w2=2, c2=channels
-    )
+    rest = einshape("nhw(cixd)->n(hi)(wx)(cd)", rest, i=2, x=2, d=channels)
     x = jnp.concatenate([low, rest], axis=-1)
     return x
 
@@ -235,13 +227,7 @@ def unpack(x, levels):
     for i in range(levels):
         y_cur = x[..., channels * 4**i : channels * 4 ** (i + 1)]
         for j in range(i):
-            y_cur = rearrange(
-                y_cur,
-                "n h w (c h2 w2 c2) -> n (h h2) (w w2) (c c2)",
-                h2=2,
-                w2=2,
-                c2=channels,
-            )
+            y_cur = einshape("nhw(cixd)->n(hi)(wx)(cd)", y_cur, i=2, x=2, d=channels)
         y.append(tuple(jnp.split(y_cur, 3, axis=-1)))
     return y
 
@@ -256,15 +242,10 @@ def pack(x):
         A DWT coefficients array.
     """
     y = x[0]
+    channels = x[0].shape[-1]
     for i in range(len(x) - 1):
         y_cur = jnp.concatenate(x[i + 1], axis=-1)
         for j in range(i):
-            y_cur = rearrange(
-                y_cur,
-                "n (h h2) (w w2) (c c2) -> n h w (c h2 w2 c2)",
-                h2=2,
-                w2=2,
-                c2=x[0].shape[-1],
-            )
+            y_cur = einshape("n(hi)(wx)(cd)->nhw(cixd)", y_cur, i=2, x=2, d=channels)
         y = jnp.concatenate([y, y_cur], axis=-1)
     return y
